@@ -1,0 +1,29 @@
+# Python virtual environments
+.venv/
+.venv312/
+venv/
+env/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE settings
+.idea/
+.vscode/
+
+# System files
+.DS_Store
+Thumbs.db
+# Private project documents and dataset
+/SIC FINAL PROJECT DOCUMENTS/
