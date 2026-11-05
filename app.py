@@ -23,6 +23,9 @@ model = package["model"]
 features = package["features"]
 threshold = package["threshold"]
 county_to_admin2 = package["county_to_admin2"]
+input_ranges = package.get("input_ranges", {})
+observed_months = package.get("observed_months", [])
+evaluation = package.get("evaluation", {})
 
 # --------------------------------------------------
 # HEADER
@@ -90,9 +93,9 @@ with col1:
         ][x - 1],
         help=(
             "Month of assessment. Month provides seasonal context to the model. "
-            "The model was trained on observations recorded in February, June, "
-            "and October. Predictions for other months should therefore be "
-            "interpreted with additional caution."
+            "Most training observations are from February, June and October. "
+            "A few other months are represented. Months absent from the "
+            "training data are less reliable."
         )
     )
     conflict = st.number_input(
@@ -136,7 +139,7 @@ with col2:
     exchange_rate = st.number_input(
         "Exchange Rate (Local Currency per USD)",
         min_value=0.0,
-        value=110.0,
+        value=129.0,
         format="%.4f",
         help=(
             "Exchange rate expressed as units of local currency per US dollar. "
@@ -148,7 +151,7 @@ with col2:
     food_prices = st.number_input(
         "Food Price Index",
         min_value=0.0,
-        value=1.20,
+        value=1.70,
         format="%.4f",
         help=(
             "Index representing the price level of food commodities. "
@@ -193,6 +196,55 @@ if st.button(
     })
 
     input_data = input_data[features]
+
+    # A tree-based model cannot reliably extrapolate far outside the
+    # numeric conditions seen in training. Never present an extreme
+    # scenario as a confident-looking green or red prediction.
+    indicator_names = {
+        "population": "Population",
+        "month": "Month",
+        "conflict_original": "Conflict fatalities",
+        "drought_ndvi_original": "Vegetation condition (NDVI)",
+        "drought_rainfall_original": "Rainfall",
+        "exchange_rates_original": "Exchange rate",
+        "food_prices_original": "Food price index",
+        "trade_food_original": "Food trade indicator",
+    }
+    outside_training = []
+    far_outside_training = []
+    for feature_name, limits in input_ranges.items():
+        entered = float(input_data.iloc[0][feature_name])
+        minimum = float(limits["min"])
+        maximum = float(limits["max"])
+        if entered < minimum or entered > maximum:
+            label = indicator_names.get(feature_name, feature_name)
+            outside_training.append(
+                f"{label}: {entered:g} (training range {minimum:g}–{maximum:g})"
+            )
+            span = max(maximum - minimum, 1e-8)
+            if entered < minimum - 0.5 * span or entered > maximum + 0.5 * span:
+                far_outside_training.append(label)
+
+    if observed_months and month not in observed_months:
+        outside_training.append(
+            f"Month {month} (observed months: {', '.join(map(str, observed_months))})"
+        )
+
+    if far_outside_training:
+        st.error(
+            "Assessment unavailable: one or more indicators are far outside "
+            "the conditions used to train this model. A risk score would be "
+            "unreliable. Please enter realistic values."
+        )
+        st.write("Inputs requiring review: " + "; ".join(outside_training))
+        st.stop()
+
+    if outside_training:
+        st.warning(
+            "Some inputs are outside the historical training range. "
+            "Treat this as an exploratory scenario, not a validated forecast."
+        )
+        st.write("Inputs requiring caution: " + "; ".join(outside_training))
 
     score = model.predict_proba(input_data)[:, 1][0]
 
@@ -301,23 +353,25 @@ if st.button(
 
         ### How the prediction is made
 
-        The Gradient Boosting model evaluates all these predictors
-        **together** rather than using any single indicator to determine risk.
+        The Gradient Boosting model evaluates these predictors together.
+        They do not have equal influence: **NDVI was the strongest predictor**
+        in our latest evaluation. Changes in some other indicators affect
+        the risk score less strongly.
 
         The model produces a risk score and compares it with the validated
-        decision threshold of **0.035**.
+        decision threshold of **{threshold:.3f}**.
 
-        - **Score ≥ 0.035 → Elevated IPC3+ Risk**
-        - **Score < 0.035 → Lower IPC3+ Risk**
+        - **Score ≥ {threshold:.3f} → Elevated IPC3+ Risk**
+        - **Score < {threshold:.3f} → Lower IPC3+ Risk**
 
-        The threshold was selected using validation data while maintaining
-        at least **80% recall** for IPC3+ observations.
+        The threshold was selected using **2023 validation data**, while
+        maintaining at least **80% recall** for IPC3+ observations.
 
         **Important:** This model identifies patterns associated with IPC3+
         conditions. It does not establish that an individual predictor
         causes food insecurity, and the prediction is not an official IPC
         classification.
-        """
+        """.format(threshold=threshold)
     )
 
 # --------------------------------------------------
@@ -328,21 +382,25 @@ st.divider()
 
 with st.expander("Model performance"):
 
-    st.markdown(
-        """
+    if evaluation:
+        st.markdown(
+            f"""
         **Final chronological test period: 2024–2026**
 
-        - Accuracy: **87.7%**
-        - Precision for IPC3+: **36.9%**
-        - Recall for IPC3+: **86.5%**
-        - F1-score: **0.518**
-        - ROC-AUC: **0.933**
-        - PR-AUC: **0.469**
+        - Accuracy: **{evaluation['accuracy']:.1%}**
+        - Precision for IPC3+: **{evaluation['precision']:.1%}**
+        - Recall for IPC3+: **{evaluation['recall']:.1%}**
+        - F1-score: **{evaluation['f1']:.3f}**
+        - ROC-AUC: **{evaluation['roc_auc']:.3f}**
+        - PR-AUC: **{evaluation['pr_auc']:.3f}**
 
-        The model correctly detected **96 of 111 IPC3+ observations**
-        in the final test period.
+        The model correctly detected **{evaluation['true_positive']} of
+        {evaluation['positive_cases']} IPC3+ observations** in the final
+        evaluation period. This is a prototype, not an official IPC forecast.
         """
-    )
+        )
+    else:
+        st.info("Evaluation metrics were not included in this model package.")
 
 st.caption(
     "Kenya Food Insecurity Early-Warning System — Machine Learning Prototype"
